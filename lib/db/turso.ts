@@ -14,18 +14,39 @@ import type {
 // Turso is a hosted SQLite database accessed over HTTPS/WebSocket. Because the
 // database lives in Turso's cloud, the data persists across Hostinger restarts
 // (unlike a local .db file, which gets wiped on every redeploy).
-const url = process.env.TURSO_DB_URL;
-const token = process.env.TURSO_DB_TOKEN;
+//
+// The client is created lazily (on first live query) so that `next build` can
+// import this module without trying to connect to the database — and so a
+// misconfigured env var fails with a helpful message at request time instead of
+// crashing the build or throwing a cryptic "URL_INVALID" at import time.
+let _client: Client | null = null;
 
-if (!url) {
-  throw new Error(
-    "TURSO_DB_URL is not set. Add it to your environment (set it in .env.local for local dev, and in the Hostinger app's env vars for production)."
-  );
+function buildClient(): Client {
+  const url = process.env.TURSO_DB_URL ?? "";
+  const token = process.env.TURSO_DB_TOKEN ?? "";
+
+  if (!url) {
+    throw new Error(
+      "TURSO_DB_URL is not set. Add it to your environment (set it in .env.local for local dev, and in the Hostinger app's env vars for production)."
+    );
+  }
+
+  if (!/^(libsql|https?|wss?|file):\/\//.test(url)) {
+    throw new Error(
+      `TURSO_DB_URL is invalid: "${url}". That looks like your auth token, not a database URL. ` +
+        `Copy the full "libsql://YOUR_DB.REGION.turso.io" address from the Turso dashboard and put it in ` +
+        `TURSO_DB_URL; put the long token in TURSO_DB_TOKEN instead.`
+    );
+  }
+
+  return createClient({ url, authToken: token || undefined });
 }
 
-export const client: Client = createClient({
-  url,
-  authToken: token || undefined,
+export const client: Client = new Proxy({} as Client, {
+  get(_target, prop, receiver) {
+    if (!_client) _client = buildClient();
+    return Reflect.get(_client, prop, receiver);
+  },
 });
 
 // ---------------------------------------------------------------------------
