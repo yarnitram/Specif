@@ -114,14 +114,16 @@ export default function Terminal({ initialRows }: TerminalProps) {
     });
     const json = await res.json();
     if (!res.ok) throw new Error(json.error ?? "Failed to add symbol");
-    setRows((prev) => {
-      if (prev.some((r) => r.symbol === json.data.symbol)) {
-        toast.info("Symbol already in watchlist");
-        return prev;
-      }
-      toast.success(`Added ${json.data.symbol}`);
-      return [...prev, json.data];
-    });
+    // If the symbol is already in the watchlist, still open its editor.
+    if (rowsRef.current.some((r) => r.symbol === json.data.symbol)) {
+      toast.info("Symbol already in watchlist");
+      setEditing(json.data);
+      return;
+    }
+    setRows((prev) => [...prev, json.data]);
+    toast.success(`Added ${json.data.symbol}`);
+    // Open the strategy modal directly so the new coin's inputs can be set right away.
+    setEditing(json.data);
   }, []);
 
   const removeSymbol = useCallback(async (row: WatchlistJoined) => {
