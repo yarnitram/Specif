@@ -1,7 +1,8 @@
 # MEXC Futures Terminal
 
 A full-stack, real-time crypto watchlist & strategy planning terminal.
-Built with **Next.js** (App Router), **TypeScript**, **Tailwind CSS**, and **SQLite3** (`better-sqlite3`).
+Built with **Next.js** (App Router), **TypeScript**, **Tailwind CSS**, and **SQLite** (`node:sqlite` locally,
+Turso/libSQL in production for persistent, hosted storage).
 
 Live price data streams from the **MEXC Futures WebSocket** endpoint (`wss://contract.mexc.com/ws`) and
 drives a real-time alarm engine that fires toast alerts when a strategy's trigger / TP / SL levels are hit.
@@ -22,8 +23,21 @@ npm run build
 npm run start
 ```
 
-The SQLite database is auto-created at `data/terminal.db` (WAL mode) and pre-seeded with
-`BTC_USDT`, `ETH_USDT`, `SOL_USDT`, `MX_USDT` on first run.
+Without any Turso env vars the app uses a **local** SQLite database auto-created at `data/terminal.db`
+(WAL mode), pre-seeded with `BTC_USDT`, `ETH_USDT`, `SOL_USDT`, `MX_USDT` on first run. Use this for local
+dev or a VPS with a persistent disk.
+
+For **shared hosting (Hostinger) and any deployment where the local disk is wiped on redeploy**, set the
+Turso env vars (see `.env.example`) so the app uses **Turso — a hosted, persistent SQLite database** instead
+of a local file:
+
+```bash
+cp .env.example .env.local   # then fill in your Turso URL + token
+```
+
+The backend is chosen automatically at request time: if `TURSO_DB_URL` is set it uses Turso, otherwise it
+falls back to local `node:sqlite`. The client is created lazily on the first query, so `next build` never
+touches the database.
 
 ---
 
@@ -62,7 +76,7 @@ components/
 hooks/
   useMexcWebsocket.ts       MEXC WS manager (reconnect backoff, subscriptions)
 lib/
-  db.ts                     SQLite schema, migrations, queries (better-sqlite3)
+  db.ts                     SQLite schema, migrations, queries (node:sqlite local OR Turso/libSQL remote)
   utils.ts                  cn() helper, price/percent formatting
 types/
   global.d.ts               Ambient CSS module declarations
@@ -115,7 +129,12 @@ Database runs with `journal_mode = WAL` and foreign keys enabled.
 
 ## Notes
 
-- `better-sqlite3` is a native module; it is externalized for the server build via
-  `serverExternalPackages` in `next.config.mjs`.
+- **Storage backend:** `lib/db.ts` runs on **Turso (hosted SQLite)** when `TURSO_DB_URL` is set, otherwise on
+  local `node:sqlite`. This is what keeps your data persistent on Hostinger shared hosting, where a local
+  `.db` file gets wiped on every redeploy.
+- `@libsql/client` (the Turso SDK) is externalized from the bundle via `serverExternalPackages` in
+  `next.config.mjs` — it runs server-side only.
+- The Turso client is created **lazily on first query**, so `next build` has no DB requirement and missing
+  env vars produce a clear error at request time instead of crashing the build.
 - All prices/percentages use monospace `font-mono` with tabular numerals.
 - Positive change = **Emerald** (`#10b981`), negative = **Rose** (`#f43f5e`).
