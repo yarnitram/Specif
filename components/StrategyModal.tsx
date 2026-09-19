@@ -113,9 +113,9 @@ export default function StrategyModal({ row, tick, onClose, onSaved }: StrategyM
     "w-full rounded-lg border border-borderline bg-base/60 px-3 py-2 font-mono text-sm text-slate-100 outline-none transition focus:border-emerald/50 appearance-none";
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-end bg-black/60 backdrop-blur-sm" onClick={onClose}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4" onClick={onClose}>
       <div
-        className="h-full w-full max-w-md overflow-y-auto border-l border-borderline bg-[#0b1020] p-6 shadow-2xl"
+        className="w-full max-w-md max-h-[90vh] overflow-y-auto rounded-xl border border-borderline bg-[#0b1020] p-6 shadow-2xl"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="mb-5 flex items-center justify-between">

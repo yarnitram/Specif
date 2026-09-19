@@ -3,7 +3,7 @@ import Terminal from "@/components/Terminal";
 
 export const dynamic = "force-dynamic";
 
-export default function Page() {
-  const initialRows = listWatchlist();
+export default async function Page() {
+  const initialRows = await listWatchlist();
   return <Terminal initialRows={initialRows} />;
 }

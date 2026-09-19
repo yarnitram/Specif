@@ -1,7 +1,7 @@
 # MEXC Futures Terminal
 
 A full-stack, real-time crypto watchlist & strategy planning terminal.
-Built with **Next.js** (App Router), **TypeScript**, **Tailwind CSS**, and **SQLite3** (`better-sqlite3`).
+Built with **Next.js** (App Router), **TypeScript**, **Tailwind CSS**, and **SQLite** hosted on **Turso** (`@libsql/client`).
 
 Live price data streams from the **MEXC Futures WebSocket** endpoint (`wss://contract.mexc.com/ws`) and
 drives a real-time alarm engine that fires toast alerts when a strategy's trigger / TP / SL levels are hit.
@@ -109,13 +109,13 @@ CREATE TABLE strategies (
 );
 ```
 
-Database runs with `journal_mode = WAL` and foreign keys enabled.
+Data is stored in a persistent Turso database (hosted SQLite) so it survives redeploys and server restarts — unlike a local `.db` file, which gets wiped on shared hosting.
 
 ---
 
 ## Notes
 
-- `better-sqlite3` is a native module; it is externalized for the server build via
-  `serverExternalPackages` in `next.config.mjs`.
+- The database is **Turso** (`@libsql/client`), externalized for the server build via
+  `serverExternalPackages` in `next.config.mjs`. Set `TURSO_DB_URL` and `TURSO_DB_TOKEN` in your environment.
 - All prices/percentages use monospace `font-mono` with tabular numerals.
 - Positive change = **Emerald** (`#10b981`), negative = **Rose** (`#f43f5e`).

@@ -9,7 +9,7 @@ export async function GET(
   try {
     const { symbol: raw } = await ctx.params;
     const symbol = decodeURIComponent(raw);
-    const joined = listWatchlist().find((row) => row.symbol === symbol);
+    const joined = (await listWatchlist()).find((row) => row.symbol === symbol);
     return NextResponse.json({ data: joined?.strategy ?? null });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
@@ -23,7 +23,7 @@ export async function DELETE(
   try {
     const { symbol: raw } = await ctx.params;
     const symbol = decodeURIComponent(raw);
-    deleteStrategy(symbol);
+    await deleteStrategy(symbol);
     return NextResponse.json({ success: true });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });

@@ -12,7 +12,7 @@ export async function PUT(req: NextRequest) {
       symbol: String(item?.symbol ?? ""),
       sort_order: Number(item?.sort_order ?? 0),
     }));
-    reorderSymbols(normalized);
+    await reorderSymbols(normalized);
     return NextResponse.json({ success: true });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
