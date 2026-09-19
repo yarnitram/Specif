@@ -8,7 +8,7 @@ export async function DELETE(
   try {
     const { symbol: raw } = await ctx.params;
     const symbol = decodeURIComponent(raw);
-    removeSymbol(symbol);
+    await removeSymbol(symbol);
     return NextResponse.json({ success: true });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });

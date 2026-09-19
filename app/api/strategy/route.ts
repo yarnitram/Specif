@@ -30,7 +30,7 @@ export async function POST(req: NextRequest) {
       slFired: Boolean(body?.slFired),
     };
 
-    const row = upsertStrategy(input);
+    const row = await upsertStrategy(input);
     return NextResponse.json({ data: row }, { status: 200 });
   } catch (err) {
     return NextResponse.json({ error: String(err) }, { status: 500 });
