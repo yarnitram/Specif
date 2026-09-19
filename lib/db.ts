@@ -1,4 +1,4 @@
-﻿import Database from "better-sqlite3";
+import { DatabaseSync } from "node:sqlite";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -56,9 +56,9 @@ if (!fs.existsSync(dataDir)) {
 
 const dbPath = path.join(dataDir, "terminal.db");
 
-const db = new Database(dbPath);
-db.pragma("journal_mode = WAL");
-db.pragma("foreign_keys = ON");
+const db = new DatabaseSync(dbPath);
+db.exec("PRAGMA journal_mode = WAL");
+db.exec("PRAGMA foreign_keys = ON");
 
 export function migrate() {
   db.exec(`
@@ -104,10 +104,14 @@ export function migrate() {
       "INSERT INTO watchlist (symbol, sort_order) VALUES (?, ?)"
     );
     const seedList = ["BTC_USDT", "ETH_USDT", "SOL_USDT", "MX_USDT"];
-    const tx = db.transaction((symbols: string[]) => {
-      symbols.forEach((symbol, idx) => seed.run(symbol, idx));
-    });
-    tx(seedList);
+    db.exec("BEGIN");
+    try {
+      seedList.forEach((symbol, idx) => seed.run(symbol, idx));
+      db.exec("COMMIT");
+    } catch (err) {
+      db.exec("ROLLBACK");
+      throw err;
+    }
   }
 }
 
@@ -125,7 +129,7 @@ export function listWatchlist(): WatchlistJoined[] {
     const s = strategyStmt.get(row.symbol) as StrategyRow | undefined;
     return {
       ...row,
-      strategy: s && "symbol" in s ? s : null,
+      strategy: s && "symbol" in s ? ({ ...s } as StrategyRow) : null,
     };
   });
 }
@@ -138,7 +142,11 @@ export function addSymbol(rawSymbol: string): WatchlistJoined {
   }
   const existing = db.prepare("SELECT * FROM watchlist WHERE symbol = ?").get(symbol);
   if (existing) {
-    return existing as WatchlistJoined;
+    const strat = db.prepare("SELECT * FROM strategies WHERE symbol = ?").get(symbol) as StrategyRow | undefined;
+    return {
+      ...existing,
+      strategy: strat && "symbol" in strat ? ({ ...strat } as StrategyRow) : null,
+    } as WatchlistJoined;
   }
   const maxOrder = (
     db.prepare("SELECT MAX(sort_order) AS m FROM watchlist").get() as { m: number | null }
@@ -149,7 +157,7 @@ export function addSymbol(rawSymbol: string): WatchlistJoined {
     .run(symbol, nextOrder);
   const row = db
     .prepare("SELECT * FROM watchlist WHERE id = ?")
-    .get(info.lastInsertRowid) as WatchlistRow;
+    .get(Number(info.lastInsertRowid)) as WatchlistRow;
   return { ...row, strategy: null };
 }
 
@@ -161,10 +169,14 @@ export function removeSymbol(symbol: string) {
 export function reorderSymbols(items: Array<{ symbol: string; sort_order: number }>) {
   migrate();
   const stmt = db.prepare("UPDATE watchlist SET sort_order = ? WHERE symbol = ?");
-  const tx = db.transaction((arr: Array<{ symbol: string; sort_order: number }>) => {
-    arr.forEach((item) => stmt.run(item.sort_order, item.symbol));
-  });
-  tx(items);
+  db.exec("BEGIN");
+  try {
+    items.forEach((item) => stmt.run(item.sort_order, item.symbol));
+    db.exec("COMMIT");
+  } catch (err) {
+    db.exec("ROLLBACK");
+    throw err;
+  }
 }
 
 export type UpsertStrategyInput = {
@@ -185,31 +197,31 @@ export function upsertStrategy(input: UpsertStrategyInput): StrategyRow {
   db.prepare(
     `INSERT INTO strategies
       (symbol, trigger_type, trigger_price, entry_price, tp_price, sl_price, order_type, trigger_fired, tp_fired, sl_fired, updated_at)
-     VALUES (@symbol, @triggerType, @triggerPrice, @entryPrice, @tpPrice, @slPrice, @orderType, @triggerFired, @tpFired, @slFired, CURRENT_TIMESTAMP)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
      ON CONFLICT(symbol) DO UPDATE SET
-      trigger_type = @triggerType,
-      trigger_price = @triggerPrice,
-      entry_price = @entryPrice,
-      tp_price = @tpPrice,
-      sl_price = @slPrice,
-      order_type = @orderType,
-      trigger_fired = @triggerFired,
-      tp_fired = @tpFired,
-      sl_fired = @slFired,
+      trigger_type = excluded.trigger_type,
+      trigger_price = excluded.trigger_price,
+      entry_price = excluded.entry_price,
+      tp_price = excluded.tp_price,
+      sl_price = excluded.sl_price,
+      order_type = excluded.order_type,
+      trigger_fired = excluded.trigger_fired,
+      tp_fired = excluded.tp_fired,
+      sl_fired = excluded.sl_fired,
       updated_at = CURRENT_TIMESTAMP`
-  ).run({
-    symbol: input.symbol,
-    triggerType: input.triggerType,
-    triggerPrice: input.triggerPrice ?? null,
-    entryPrice: input.entryPrice ?? null,
-    tpPrice: input.tpPrice ?? null,
-    slPrice: input.slPrice ?? null,
-    orderType: input.orderType,
-    triggerFired: input.triggerFired ? 1 : 0,
-    tpFired: input.tpFired ? 1 : 0,
-    slFired: input.slFired ? 1 : 0,
-  });
-  return db.prepare("SELECT * FROM strategies WHERE symbol = ?").get(input.symbol) as StrategyRow;
+  ).run(
+    input.symbol,
+    input.triggerType,
+    input.triggerPrice ?? null,
+    input.entryPrice ?? null,
+    input.tpPrice ?? null,
+    input.slPrice ?? null,
+    input.orderType,
+    input.triggerFired ? 1 : 0,
+    input.tpFired ? 1 : 0,
+    input.slFired ? 1 : 0
+  );
+  return { ...(db.prepare("SELECT * FROM strategies WHERE symbol = ?").get(input.symbol) as StrategyRow) };
 }
 
 export function deleteStrategy(symbol: string) {
