@@ -10,11 +10,11 @@ export default function SettingsPage() {
   const router = useRouter();
   const [notifSettings, setNotifSettings] = useState<NotificationSettings>({
     desktopEnabled: false,
-    desktopTitle: "MEXC Alert",
+    desktopTitle: "Specif Alert",
     desktopBody: "{symbol} · {type} hit at {price}",
     discordEnabled: false,
     discordWebhookUrl: "",
-    discordUsername: "MEXC Terminal",
+    discordUsername: "Specif Terminal",
     discordAvatarUrl: "",
   });
   const [generalSettings, setGeneralSettings] = useState<GeneralSettings>({
@@ -91,8 +91,8 @@ export default function SettingsPage() {
       setPermission(p);
     }
     if (Notification.permission === "granted") {
-      new Notification(notifSettings.desktopTitle || "MEXC Alert", {
-        body: "Test notification from MEXC Terminal",
+      new Notification(notifSettings.desktopTitle || "Specif Alert", {
+        body: "Test notification from Specif Terminal",
         icon: "/favicon.ico",
       });
       toast.success("Test notification sent");
@@ -113,7 +113,7 @@ export default function SettingsPage() {
         content: null,
         embeds: [
           {
-            title: "📈 MEXC Alert (Test)",
+            title: "📈 Specif Alert (Test)",
             color: 0x10b981,
             fields: [
               { name: "Symbol", value: "BTC_USDT", inline: true },
@@ -121,7 +121,7 @@ export default function SettingsPage() {
               { name: "Price", value: "50000.00", inline: true },
             ],
             timestamp: new Date().toISOString(),
-            footer: { text: "MEXC Futures Terminal" },
+            footer: { text: "Specif" },
           },
         ],
       };
@@ -249,7 +249,7 @@ export default function SettingsPage() {
                       value={notifSettings.desktopTitle}
                       onChange={(e) => handleNotifChange("desktopTitle", e.target.value)}
                       className="w-full rounded-lg border border-borderline bg-base/60 px-3 py-2 font-mono text-sm text-slate-100 outline-none focus:border-emerald/50"
-                      placeholder="MEXC Alert"
+                      placeholder="Specif Alert"
                     />
                   </div>
                   <div>
@@ -309,7 +309,7 @@ export default function SettingsPage() {
                       value={notifSettings.discordUsername}
                       onChange={(e) => handleNotifChange("discordUsername", e.target.value)}
                       className="w-full rounded-lg border border-borderline bg-base/60 px-3 py-2 font-mono text-sm text-slate-100 outline-none focus:border-blue-400/50"
-                      placeholder="MEXC Terminal"
+                      placeholder="Specif Terminal"
                     />
                   </div>
                   <div>

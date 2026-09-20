@@ -1,5 +1,5 @@
 Markdown
-# Blueprint: MEXC Futures Terminal (Next.js + SQLite3)
+# Blueprint: Specif (Next.js + SQLite3)
 
 Build a full-stack real-time crypto watchlist and strategy planning terminal using Next.js (App Router), TypeScript, Tailwind CSS, and SQLite3.
 

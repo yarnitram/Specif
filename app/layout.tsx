@@ -2,7 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "MEXC Futures Terminal",
+  title: "Specif",
   description: "Real-time crypto watchlist & strategy planning terminal",
 };
 

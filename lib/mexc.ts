@@ -62,6 +62,41 @@ export async function fetchMexcSymbols(): Promise<MexcSymbolInfo[]> {
 export type MexcError = { success?: boolean; code?: number; message?: string };
 
 /**
+ * Fetches the MEXC Futures max leverage (the maxLeverage field from the
+ * contract/detail endpoint) for a single contract, or null when it can't be
+ * determined (network failure / symbol not found).
+ */
+export async function fetchMaxLeverage(symbol: string): Promise<number | null> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8000);
+  try {
+    const res = await fetch(
+      `${MEXC_API_BASE}/detail?symbol=${encodeURIComponent(symbol)}`,
+      {
+        signal: controller.signal,
+        headers: { Accept: "application/json" },
+        cache: "no-store",
+      }
+    );
+    if (!res.ok) {
+      console.error(`[mexc] detail HTTP ${res.status}`);
+      return null;
+    }
+    const json = (await res.json()) as { success?: boolean; data?: unknown };
+    if (!json.success || typeof json.data !== "object" || json.data === null) {
+      return null;
+    }
+    const maxLeverage = Number((json.data as Record<string, unknown>).maxLeverage);
+    return Number.isFinite(maxLeverage) && maxLeverage > 0 ? maxLeverage : null;
+  } catch (err) {
+    console.error("[mexc] detail request failed", err);
+    return null;
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+/**
  * Fetches the full MEXC Futures ticker snapshot via REST.
  * Returns a map of symbol -> TickerData, or null on failure.
  *

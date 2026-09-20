@@ -1,4 +1,4 @@
-# MEXC Futures Terminal
+# Specif
 
 A full-stack, real-time crypto watchlist & strategy planning terminal.
 Built with **Next.js** (App Router), **TypeScript**, **Tailwind CSS**, and **SQLite** (`node:sqlite` locally,

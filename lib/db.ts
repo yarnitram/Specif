@@ -476,11 +476,11 @@ const SETTINGS_KEYS = {
 function getDefaultNotificationSettings(): NotificationSettings {
   return {
     desktopEnabled: false,
-    desktopTitle: "MEXC Alert",
+    desktopTitle: "Specif Alert",
     desktopBody: "{symbol} · {type} hit at {price}",
     discordEnabled: false,
     discordWebhookUrl: "",
-    discordUsername: "MEXC Terminal",
+    discordUsername: "Specif Terminal",
     discordAvatarUrl: "",
   };
 }

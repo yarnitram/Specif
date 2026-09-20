@@ -50,7 +50,7 @@ export async function fireAlert(
 ): Promise<void> {
   // Desktop
   if (settings.desktopEnabled && Notification.permission === "granted") {
-    const title = settings.desktopTitle ?? "MEXC Alert";
+    const title = settings.desktopTitle ?? "Specif Alert";
     const body = formatNotificationTemplate(
       settings.desktopBody ?? "{symbol} · {type} hit at {price}",
       { symbol, type, price }
@@ -78,7 +78,7 @@ async function sendDiscordWebhook(
     content: null,
     embeds: [
       {
-        title: "📈 MEXC Alert",
+        title: "📈 Specif Alert",
         color: 0x10b981,
         fields: [
           { name: "Symbol", value: symbol, inline: true },
@@ -86,7 +86,7 @@ async function sendDiscordWebhook(
           { name: "Price", value: price, inline: true },
         ],
         timestamp: new Date().toISOString(),
-        footer: { text: "MEXC Futures Terminal" },
+        footer: { text: "Specif" },
       },
     ],
   };

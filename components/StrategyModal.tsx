@@ -32,6 +32,30 @@ export default function StrategyModal({ row, tick, onClose, onSaved }: StrategyM
     orderType: (strategy?.order_type as OrderType) ?? "LIMIT",
   }));
   const [saving, setSaving] = useState(false);
+  const [maxLeverage, setMaxLeverage] = useState<number | null>(null);
+
+  // Load the MEXC max leverage for this contract.
+  useEffect(() => {
+    let cancelled = false;
+    setMaxLeverage(null);
+    const controller = new AbortController();
+    fetch(`/api/mexc/leverage?symbol=${encodeURIComponent(row.symbol)}`, {
+      signal: controller.signal,
+    })
+      .then((res) => res.json())
+      .then((json) => {
+        if (!cancelled) {
+          setMaxLeverage(json.data == null ? null : Number(json.data));
+        }
+      })
+      .catch(() => {
+        /* leave null on failure or cancel */
+      });
+    return () => {
+      cancelled = true;
+      controller.abort();
+    };
+  }, [row.symbol]);
 
   // Resync form when an existing strategy loads later.
   useEffect(() => {
@@ -132,7 +156,7 @@ export default function StrategyModal({ row, tick, onClose, onSaved }: StrategyM
         <div className="mb-6 grid grid-cols-2 gap-2">
           <Metric label="Last" value={live ? formatPrice(live.lastPrice) : "—"} accent />
           <Metric label="Fair" value={live ? formatPrice(live.fairPrice) : "—"} />
-          <Metric label="Index" value={live ? formatPrice(live.indexPrice) : "—"} />
+          <Metric label="Leverage" value={maxLeverage != null ? `${maxLeverage}x` : "—"} />
           <Metric
             label="24h Change"
             value={live ? (live.riseFallRate >= 0 ? "+" : "") + (live.riseFallRate * 100).toFixed(2) + "%" : "—"}
