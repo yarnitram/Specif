@@ -1,8 +1,8 @@
 "use client";
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { Toaster, toast } from "sonner";
-import type { StrategyRow, TickerData, WatchlistJoined, NotificationSettings, GeneralSettings } from "@/lib/db";
+import { toast } from "sonner";
+import type { StrategyRow, TickerData, WatchlistJoined, NotificationSettings, GeneralSettings, TradeAlertType } from "@/lib/db";
 import { fireAlert } from "@/lib/notifications";
 import Header from "./Header";
 import StatusBar from "./StatusBar";
@@ -194,6 +194,30 @@ export default function Terminal({ initialRows }: TerminalProps) {
     setRows((prev) => prev.map((r) => (r.symbol === symbol ? { ...r, strategy: json.data ?? r.strategy } : r)));
   }
 
+  /**
+   * Appends a fired alarm to the trade log that backs the Trades page
+   * (symbol, last price, leverage, order type, entry / TP / SL). The leverage
+   * is resolved server-side from MEXC. Fire-and-forget: a failed log must never
+   * block the alarm itself.
+   */
+  function logTrade(symbol: string, alertType: TradeAlertType, lastPrice: number, strategy: StrategyRow) {
+    void fetch("/api/trades", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        symbol,
+        alertType,
+        lastPrice,
+        orderType: strategy.order_type,
+        entryPrice: strategy.entry_price,
+        tpPrice: strategy.tp_price,
+        slPrice: strategy.sl_price,
+      }),
+    }).catch((err) => {
+      console.error("[trades] failed to log alert", err);
+    });
+  }
+
   // Run the real-time alarm engine whenever live prices update.
   useEffect(() => {
     const firedPerSymbol = new Map<string, string[]>();
@@ -217,6 +241,10 @@ export default function Terminal({ initialRows }: TerminalProps) {
         toast.warning(`${key} · ${label} hit`, { description: `Last ${last} · Fair ${fair}` });
         // Fire desktop + Discord notifications
         if (notifSettings) void fireAlert(key, label, String(last), notifSettings);
+        // Append the alarm to the trade log so it shows up on the Trades page.
+        const alertType: TradeAlertType =
+          marker === "tp_fired" ? "TP" : marker === "sl_fired" ? "SL" : "TRIGGER";
+        logTrade(key, alertType, last, s);
       };
 
       // Trigger alarm - fires when price crosses trigger price in either direction
@@ -300,19 +328,6 @@ export default function Terminal({ initialRows }: TerminalProps) {
           onSaved={handleSaved}
         />
       ) : null}
-
-      <Toaster
-        position="top-right"
-        theme="dark"
-        toastOptions={{
-          style: {
-            background: "#0f172a",
-            border: "1px solid #1e293b",
-            color: "#e2e8f0",
-            fontFamily: "ui-monospace, monospace",
-          },
-        }}
-      />
     </main>
   );
 }

@@ -47,6 +47,26 @@ export type WatchlistJoined = WatchlistRow & {
   strategy: StrategyRow | null;
 };
 
+/** Which alarm produced a trade-log row. */
+export type TradeAlertType = "TRIGGER" | "TP" | "SL";
+
+/**
+ * A single entry in the trade log. One row is appended every time a strategy
+ * alarm fires on the watchlist page (trigger / take-profit / stop-loss).
+ */
+export type TradeRow = {
+  id: number;
+  symbol: string;
+  alert_type: TradeAlertType;
+  last_price: number | null;
+  leverage: number | null;
+  order_type: OrderType;
+  entry_price: number | null;
+  tp_price: number | null;
+  sl_price: number | null;
+  created_at: string;
+};
+
 // ---------------------------------------------------------------------------
 // Backend selection
 // ---------------------------------------------------------------------------
@@ -173,6 +193,21 @@ function asStrategyRow(r: Record<string, unknown>): StrategyRow {
   };
 }
 
+function asTradeRow(r: Record<string, unknown>): TradeRow {
+  return {
+    id: Number(r.id),
+    symbol: String(r.symbol),
+    alert_type: (r.alert_type as TradeAlertType) ?? "TRIGGER",
+    last_price: r.last_price == null ? null : Number(r.last_price),
+    leverage: r.leverage == null ? null : Number(r.leverage),
+    order_type: (r.order_type as OrderType) ?? "LIMIT",
+    entry_price: r.entry_price == null ? null : Number(r.entry_price),
+    tp_price: r.tp_price == null ? null : Number(r.tp_price),
+    sl_price: r.sl_price == null ? null : Number(r.sl_price),
+    created_at: String(r.created_at ?? ""),
+  };
+}
+
 function toStrategyRow(r: unknown): StrategyRow | null {
   if (!r || typeof r !== "object") return null;
   const rec = r as Record<string, unknown>;
@@ -202,6 +237,24 @@ CREATE TABLE IF NOT EXISTS strategies (
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (symbol) REFERENCES watchlist(symbol) ON DELETE CASCADE
 );
+
+-- Trade log: one row is appended every time a strategy alarm fires
+-- (trigger / take-profit / stop-loss). Deliberately has NO foreign key to
+-- watchlist so the log survives removing a pair from the watchlist.
+CREATE TABLE IF NOT EXISTS trades (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  alert_type TEXT CHECK(alert_type IN ('TRIGGER', 'TP', 'SL')) DEFAULT 'TRIGGER',
+  last_price REAL,
+  leverage REAL,
+  order_type TEXT CHECK(order_type IN ('LIMIT', 'MARKET', 'TRIGGER_LIMIT')) DEFAULT 'LIMIT',
+  entry_price REAL,
+  tp_price REAL,
+  sl_price REAL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX IF NOT EXISTS idx_trades_created_at ON trades (created_at DESC);
 
 CREATE TABLE IF NOT EXISTS settings (
   key TEXT PRIMARY KEY,
@@ -447,6 +500,114 @@ export async function deleteStrategy(symbol: string): Promise<void> {
     await remoteClient!.execute({ sql: "DELETE FROM strategies WHERE symbol = ?", args: [symbol] });
   } else {
     (localDb as LocalDb).prepare("DELETE FROM strategies WHERE symbol = ?").run(symbol);
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Trades (alarm log)
+// ---------------------------------------------------------------------------
+// One row per fired alarm, written by the client alarm engine via POST
+// /api/trades. Read by the /trades page.
+
+export type AddTradeInput = {
+  symbol: string;
+  alertType: TradeAlertType;
+  lastPrice: number | null;
+  leverage: number | null;
+  orderType: OrderType;
+  entryPrice: number | null;
+  tpPrice: number | null;
+  slPrice: number | null;
+};
+
+const insertTradeSql = `INSERT INTO trades
+    (symbol, alert_type, last_price, leverage, order_type, entry_price, tp_price, sl_price, created_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
+
+/** Trade-log rows, newest first. */
+export async function listTrades(limit = 200): Promise<TradeRow[]> {
+  await migrate();
+  const b = backend;
+  const capped = Number.isFinite(limit) && limit > 0 ? Math.floor(limit) : 200;
+  if (b === "remote") {
+    const rs = await remoteClient!.execute({
+      sql: "SELECT * FROM trades ORDER BY id DESC LIMIT ?",
+      args: [capped],
+    });
+    return remoteRows(rs).map(asTradeRow);
+  }
+  const rows = (localDb as LocalDb)
+    .prepare("SELECT * FROM trades ORDER BY id DESC LIMIT ?")
+    .all(capped) as Record<string, unknown>[];
+  return rows.map(asTradeRow);
+}
+
+/** Appends one row to the trade log and returns the stored row. */
+export async function addTrade(input: AddTradeInput): Promise<TradeRow> {
+  await migrate();
+  const b = backend;
+  const args: SqlArg[] = [
+    input.symbol,
+    input.alertType,
+    input.lastPrice ?? null,
+    input.leverage ?? null,
+    input.orderType,
+    input.entryPrice ?? null,
+    input.tpPrice ?? null,
+    input.slPrice ?? null,
+  ];
+  if (b === "remote") {
+    const ins = await remoteClient!.execute({ sql: insertTradeSql, args });
+    const rs = await remoteClient!.execute({
+      sql: "SELECT * FROM trades WHERE id = ?",
+      args: [Number(ins.lastInsertRowid)],
+    });
+    const rows = remoteRows(rs);
+    return asTradeRow(rows[0]);
+  }
+  const db = localDb as LocalDb;
+  const info = db.prepare(insertTradeSql).run(...args);
+  const row = db.prepare("SELECT * FROM trades WHERE id = ?").get(Number(info.lastInsertRowid)) as Record<
+    string,
+    unknown
+  >;
+  return asTradeRow(row);
+}
+
+/**
+ * Returns the trade row when the same symbol + alert type was logged within
+ * `withinSeconds` (used to collapse duplicate submissions, e.g. from React's
+ * double-invoked effects in dev), otherwise null.
+ */
+export async function findRecentTrade(
+  symbol: string,
+  alertType: TradeAlertType,
+  withinSeconds = 5
+): Promise<TradeRow | null> {
+  await migrate();
+  const b = backend;
+  const offset = `-${Math.max(1, Math.floor(withinSeconds))} seconds`;
+  const sql = `SELECT * FROM trades
+   WHERE symbol = ? AND alert_type = ? AND created_at >= datetime('now', ?)
+   ORDER BY id DESC LIMIT 1`;
+  if (b === "remote") {
+    const rs = await remoteClient!.execute({ sql, args: [symbol, alertType, offset] });
+    const rows = remoteRows(rs);
+    return rows.length ? asTradeRow(rows[0]) : null;
+  }
+  const row = (localDb as LocalDb).prepare(sql).get(symbol, alertType, offset) as
+    | Record<string, unknown>
+    | undefined;
+  return row ? asTradeRow(row) : null;
+}
+
+export async function deleteTrade(id: number): Promise<void> {
+  await migrate();
+  const b = backend;
+  if (b === "remote") {
+    await remoteClient!.execute({ sql: "DELETE FROM trades WHERE id = ?", args: [id] });
+  } else {
+    (localDb as LocalDb).prepare("DELETE FROM trades WHERE id = ?").run(id);
   }
 }
 

@@ -48,6 +48,9 @@ touches the database.
 - **Drag & drop reorder** — persisted to the DB in a single transaction.
 - **Strategy planning modal** — live tick metrics plus entry, take-profit, stop-loss, and an `ABOVE`/`BELOW` trigger alarm.
 - **Real-time alarm engine** — toasts fire once per target; fired flags persist to the DB so alarms don't re-trigger.
+- **Automatic trade log** — every fired alarm (trigger / TP / SL) appends a row to the **Trades** page with the symbol,
+  last price, MEXC max leverage, order type, entry, take-profit and stop-loss. The page re-pulls the log every 5s and
+  each entry can be deleted.
 - **WebSocket manager hook** — auto-reconnects with exponential backoff and re-subscribes as the watchlist changes.
 - **Dark terminal UI** (`#080b11`) with glassmorphism cards, monospace pricing, and smooth transitions.
 
@@ -66,13 +69,17 @@ app/
     watchlist/reorder/route.ts  PUT
     strategy/route.ts           POST (upsert)
     strategy/[symbol]/route.ts  GET, DELETE
+    trades/route.ts             GET (list), POST (append a fired alarm)
+    trades/[id]/route.ts        DELETE
+  trades/page.tsx           Trades page (server) -> renders <TradesTable/>
 components/
   Terminal.tsx              Client orchestrator + real-time alarm engine
-  Header.tsx                Title, WS connection badge, quick stats
+  Header.tsx                Shared header + nav links
   AddSymbolBar.tsx          Search input + add button
   WatchlistTable.tsx        Table with drag-and-drop reordering
   WatchlistRow.tsx          Row with pricing, badges, actions
   StrategyModal.tsx         Drawer with live metrics + strategy inputs
+  TradesTable.tsx           Trade log table (Symbol, Last, Leverage, Order Type, Entry, TP, SL)
 hooks/
   useMexcWebsocket.ts       MEXC WS manager (reconnect backoff, subscriptions)
 lib/
@@ -95,6 +102,9 @@ types/
 | POST   | `/api/strategy`                   | Upsert a strategy record                             |
 | GET    | `/api/strategy/[symbol]`          | Fetch a strategy                                     |
 | DELETE | `/api/strategy/[symbol]`          | Delete a strategy                                    |
+| GET    | `/api/trades`                     | List the trade log (newest first)                    |
+| POST   | `/api/trades`                     | Append a trade row for a fired alarm (leverage resolved from MEXC) |
+| DELETE | `/api/trades/[id]`                | Delete a single trade-log row                        |
 
 ---
 
@@ -115,12 +125,31 @@ CREATE TABLE strategies (
   entry_price REAL,
   tp_price REAL,
   sl_price REAL,
+  order_type TEXT CHECK(order_type IN ('LIMIT','MARKET','TRIGGER_LIMIT')) DEFAULT 'LIMIT',
   trigger_fired BOOLEAN DEFAULT 0,
   tp_fired BOOLEAN DEFAULT 0,
   sl_fired BOOLEAN DEFAULT 0,
   updated_at DATETIME DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (symbol) REFERENCES watchlist(symbol) ON DELETE CASCADE
 );
+
+-- Trade log: appended by the client alarm engine via POST /api/trades whenever
+-- a trigger / TP / SL alarm fires. No FK to watchlist: the log is history and
+-- survives removing the pair.
+CREATE TABLE trades (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  symbol TEXT NOT NULL,
+  alert_type TEXT CHECK(alert_type IN ('TRIGGER','TP','SL')) DEFAULT 'TRIGGER',
+  last_price REAL,
+  leverage REAL,
+  order_type TEXT CHECK(order_type IN ('LIMIT','MARKET','TRIGGER_LIMIT')) DEFAULT 'LIMIT',
+  entry_price REAL,
+  tp_price REAL,
+  sl_price REAL,
+  created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE INDEX idx_trades_created_at ON trades (created_at DESC);
 ```
 
 Database runs with `journal_mode = WAL` and foreign keys enabled.
