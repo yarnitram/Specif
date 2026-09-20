@@ -5,6 +5,7 @@ import { Toaster, toast } from "sonner";
 import type { StrategyRow, TickerData, WatchlistJoined, NotificationSettings, GeneralSettings } from "@/lib/db";
 import { fireAlert } from "@/lib/notifications";
 import Header from "./Header";
+import StatusBar from "./StatusBar";
 import AddSymbolBar from "./AddSymbolBar";
 import WatchlistTable from "./WatchlistTable";
 import StrategyModal from "./StrategyModal";
@@ -271,7 +272,8 @@ export default function Terminal({ initialRows }: TerminalProps) {
   return (
     <main className="min-h-screen bg-base text-slate-200">
       <div className="mx-auto flex max-w-6xl flex-col gap-4 p-4 sm:p-6">
-        <Header
+        <Header />
+        <StatusBar
           connected={connected}
           reconnecting={!connected}
           lastMessageAt={lastTickAt}
