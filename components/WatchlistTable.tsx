@@ -5,7 +5,7 @@ import { Search, X } from "lucide-react";
 import type { TickerData, WatchlistJoined, StrategyRow } from "@/lib/db";
 import WatchlistRow from "./WatchlistRow";
 
-type SortOption = "none" | "alerts" | "orderType" | "symbol" | "change24h" | "lastPrice" | "triggerPrice";
+type SortOption = "none" | "alerts" | "orderType" | "position" | "symbol" | "change24h" | "lastPrice" | "triggerPrice";
 
 type WatchlistTableProps = {
   rows: WatchlistJoined[];
@@ -43,6 +43,12 @@ function rowMatchesSearch(row: WatchlistJoined, query: string): boolean {
     fired: !!s.trigger_fired || !!s.tp_fired || !!s.sl_fired,
     armed: !s.trigger_fired && (s.trigger_price != null || s.tp_price != null || s.sl_price != null),
     active: s.trigger_price != null || s.tp_price != null || s.sl_price != null,
+    // Side + the crossing the trigger is armed with
+    long: s.position === "LONG",
+    short: s.position === "SHORT",
+    above: s.trigger_direction === "ABOVE",
+    below: s.trigger_direction === "BELOW",
+    both: s.trigger_direction === "BOTH",
   };
 
   return Object.entries(statusKeywords).some(([kw, active]) => active && kw.includes(q));
@@ -104,6 +110,11 @@ export default function WatchlistTable({ rows, ticks, onReorder, onEdit, onRemov
             valA = sA?.order_type ?? "";
             valB = sB?.order_type ?? "";
             break;
+          case "position":
+            // LONG (2) > SHORT (1) > no strategy (0)
+            valA = sA?.position === "LONG" ? 2 : sA?.position === "SHORT" ? 1 : 0;
+            valB = sB?.position === "LONG" ? 2 : sB?.position === "SHORT" ? 1 : 0;
+            break;
           case "symbol":
             valA = a.symbol;
             valB = b.symbol;
@@ -135,6 +146,7 @@ export default function WatchlistTable({ rows, ticks, onReorder, onEdit, onRemov
     { value: "none", label: "Default (Manual Order)" },
     { value: "alerts", label: "Alerts (Triggered → Ongoing → None)" },
     { value: "orderType", label: "Order Type" },
+    { value: "position", label: "Position (Long → Short → None)" },
     { value: "symbol", label: "Symbol (A-Z)" },
     { value: "change24h", label: "24h Change (High to Low)" },
     { value: "lastPrice", label: "Last Price (High to Low)" },
@@ -233,6 +245,7 @@ export default function WatchlistTable({ rows, ticks, onReorder, onEdit, onRemov
         <thead>
           <tr className="border-b border-borderline text-left text-[11px] uppercase tracking-wider text-slate-500">
             <th className="px-4 py-3 font-semibold">Symbol</th>
+            <th className="hidden px-4 py-3 text-center font-semibold sm:table-cell">Position</th>
             <th className="px-4 py-3 text-right font-semibold">24h Change</th>
             <th className="hidden px-4 py-3 text-right font-semibold sm:table-cell">24H Volume</th>
             <th className="px-4 py-3 text-right font-semibold">Last Price</th>

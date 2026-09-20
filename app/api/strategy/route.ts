@@ -1,5 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
-import { upsertStrategy, type UpsertStrategyInput, type OrderType } from "@/lib/db";
+import {
+  upsertStrategy,
+  type UpsertStrategyInput,
+  type OrderType,
+  type Position,
+  type TriggerDirection,
+} from "@/lib/db";
 
 export async function POST(req: NextRequest) {
   try {
@@ -17,6 +23,19 @@ export async function POST(req: NextRequest) {
       ? (body.orderType as OrderType)
       : "LIMIT";
 
+    // Which crossing arms the trigger. The modal snapshots this from the live
+    // last price at save time; callers that don't send one fall back to "BOTH"
+    // (fire on a cross in either direction).
+    const triggerDirection: TriggerDirection = (["ABOVE", "BELOW", "BOTH"] as const).includes(
+      body?.triggerDirection
+    )
+      ? (body.triggerDirection as TriggerDirection)
+      : "BOTH";
+
+    const position: Position = (["LONG", "SHORT"] as const).includes(body?.position)
+      ? (body.position as Position)
+      : "LONG";
+
     const input: UpsertStrategyInput = {
       symbol,
       triggerType: body?.triggerType === "BELOW" ? "BELOW" : "ABOVE", // kept for DB compatibility, not used in new logic
@@ -25,6 +44,8 @@ export async function POST(req: NextRequest) {
       tpPrice: toNum(body?.tpPrice),
       slPrice: toNum(body?.slPrice),
       orderType,
+      position,
+      triggerDirection,
       triggerFired: Boolean(body?.triggerFired),
       tpFired: Boolean(body?.tpFired),
       slFired: Boolean(body?.slFired),

@@ -29,6 +29,20 @@ export type WatchlistRow = {
 
 export type OrderType = "LIMIT" | "MARKET" | "TRIGGER_LIMIT";
 
+/** Trade direction. LONG profits when price rises, SHORT profits when it falls. */
+export type Position = "LONG" | "SHORT";
+
+/**
+ * Which crossing of `trigger_price` arms the alarm, snapshotted at save time:
+ *
+ *   live last price ABOVE the trigger -> "BELOW" (wait for price to drop to it)
+ *   live last price BELOW the trigger -> "ABOVE" (wait for price to rise to it)
+ *
+ * "BOTH" fires on a cross in either direction. It is the manual override, and
+ * the value pre-existing rows are migrated to so their alarms are unchanged.
+ */
+export type TriggerDirection = "ABOVE" | "BELOW" | "BOTH";
+
 export type StrategyRow = {
   symbol: string;
   trigger_type: "ABOVE" | "BELOW";
@@ -37,6 +51,8 @@ export type StrategyRow = {
   tp_price: number | null;
   sl_price: number | null;
   order_type: OrderType;
+  position: Position;
+  trigger_direction: TriggerDirection;
   trigger_fired: number;
   tp_fired: number;
   sl_fired: number;
@@ -61,6 +77,7 @@ export type TradeRow = {
   last_price: number | null;
   leverage: number | null;
   order_type: OrderType;
+  position: Position;
   entry_price: number | null;
   tp_price: number | null;
   sl_price: number | null;
@@ -186,6 +203,8 @@ function asStrategyRow(r: Record<string, unknown>): StrategyRow {
     tp_price: r.tp_price == null ? null : Number(r.tp_price),
     sl_price: r.sl_price == null ? null : Number(r.sl_price),
     order_type: (r.order_type as OrderType) ?? "LIMIT",
+    position: (r.position as Position) ?? "LONG",
+    trigger_direction: (r.trigger_direction as TriggerDirection) ?? "BOTH",
     trigger_fired: Number(r.trigger_fired ?? 0),
     tp_fired: Number(r.tp_fired ?? 0),
     sl_fired: Number(r.sl_fired ?? 0),
@@ -201,6 +220,7 @@ function asTradeRow(r: Record<string, unknown>): TradeRow {
     last_price: r.last_price == null ? null : Number(r.last_price),
     leverage: r.leverage == null ? null : Number(r.leverage),
     order_type: (r.order_type as OrderType) ?? "LIMIT",
+    position: (r.position as Position) ?? "LONG",
     entry_price: r.entry_price == null ? null : Number(r.entry_price),
     tp_price: r.tp_price == null ? null : Number(r.tp_price),
     sl_price: r.sl_price == null ? null : Number(r.sl_price),
@@ -231,6 +251,8 @@ CREATE TABLE IF NOT EXISTS strategies (
   tp_price REAL,
   sl_price REAL,
   order_type TEXT CHECK(order_type IN ('LIMIT', 'MARKET', 'TRIGGER_LIMIT')) DEFAULT 'LIMIT',
+  position TEXT CHECK(position IN ('LONG', 'SHORT')) DEFAULT 'LONG',
+  trigger_direction TEXT CHECK(trigger_direction IN ('ABOVE', 'BELOW', 'BOTH')) DEFAULT 'BOTH',
   trigger_fired BOOLEAN DEFAULT 0,
   tp_fired BOOLEAN DEFAULT 0,
   sl_fired BOOLEAN DEFAULT 0,
@@ -248,6 +270,7 @@ CREATE TABLE IF NOT EXISTS trades (
   last_price REAL,
   leverage REAL,
   order_type TEXT CHECK(order_type IN ('LIMIT', 'MARKET', 'TRIGGER_LIMIT')) DEFAULT 'LIMIT',
+  position TEXT CHECK(position IN ('LONG', 'SHORT')) DEFAULT 'LONG',
   entry_price REAL,
   tp_price REAL,
   sl_price REAL,
@@ -278,6 +301,36 @@ async function migrate() {
       "ALTER TABLE strategies ADD COLUMN order_type TEXT CHECK(order_type IN ('LIMIT', 'MARKET', 'TRIGGER_LIMIT')) DEFAULT 'LIMIT'";
     if (b === "remote") await remoteClient!.execute(sql);
     else (localDb as LocalDb).exec(sql);
+  }
+
+  // Add position / trigger_direction (strategies) and position (trades).
+  // `CREATE TABLE IF NOT EXISTS` never alters a table that already exists, so
+  // these ALTERs are what upgrade a DB created before this feature - local
+  // SQLite and Turso alike.
+  // Note DEFAULT 'BOTH': strategies saved before this feature keep firing on a
+  // cross in either direction until they are saved again from the modal, which
+  // snapshots the direction from the live price at that moment.
+  const columnMigrations: Array<{ table: string; column: string; sql: string }> = [
+    {
+      table: "strategies",
+      column: "position",
+      sql: "ALTER TABLE strategies ADD COLUMN position TEXT CHECK(position IN ('LONG', 'SHORT')) DEFAULT 'LONG'",
+    },
+    {
+      table: "strategies",
+      column: "trigger_direction",
+      sql: "ALTER TABLE strategies ADD COLUMN trigger_direction TEXT CHECK(trigger_direction IN ('ABOVE', 'BELOW', 'BOTH')) DEFAULT 'BOTH'",
+    },
+    {
+      table: "trades",
+      column: "position",
+      sql: "ALTER TABLE trades ADD COLUMN position TEXT CHECK(position IN ('LONG', 'SHORT')) DEFAULT 'LONG'",
+    },
+  ];
+  for (const m of columnMigrations) {
+    if (await hasColumn(m.table, m.column)) continue;
+    if (b === "remote") await remoteClient!.execute(m.sql);
+    else (localDb as LocalDb).exec(m.sql);
   }
 
   // Pre-seed watchlist if empty.
@@ -447,14 +500,16 @@ export type UpsertStrategyInput = {
   tpPrice: number | null;
   slPrice: number | null;
   orderType: OrderType;
+  position: Position;
+  triggerDirection: TriggerDirection;
   triggerFired: boolean;
   tpFired: boolean;
   slFired: boolean;
 };
 
 const upsertSql = `INSERT INTO strategies
-    (symbol, trigger_type, trigger_price, entry_price, tp_price, sl_price, order_type, trigger_fired, tp_fired, sl_fired, updated_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
+    (symbol, trigger_type, trigger_price, entry_price, tp_price, sl_price, order_type, position, trigger_direction, trigger_fired, tp_fired, sl_fired, updated_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
    ON CONFLICT(symbol) DO UPDATE SET
     trigger_type = excluded.trigger_type,
     trigger_price = excluded.trigger_price,
@@ -462,6 +517,8 @@ const upsertSql = `INSERT INTO strategies
     tp_price = excluded.tp_price,
     sl_price = excluded.sl_price,
     order_type = excluded.order_type,
+    position = excluded.position,
+    trigger_direction = excluded.trigger_direction,
     trigger_fired = excluded.trigger_fired,
     tp_fired = excluded.tp_fired,
     sl_fired = excluded.sl_fired,
@@ -478,6 +535,8 @@ export async function upsertStrategy(input: UpsertStrategyInput): Promise<Strate
     input.tpPrice ?? null,
     input.slPrice ?? null,
     input.orderType,
+    input.position,
+    input.triggerDirection,
     input.triggerFired ? 1 : 0,
     input.tpFired ? 1 : 0,
     input.slFired ? 1 : 0,
@@ -515,14 +574,15 @@ export type AddTradeInput = {
   lastPrice: number | null;
   leverage: number | null;
   orderType: OrderType;
+  position: Position;
   entryPrice: number | null;
   tpPrice: number | null;
   slPrice: number | null;
 };
 
 const insertTradeSql = `INSERT INTO trades
-    (symbol, alert_type, last_price, leverage, order_type, entry_price, tp_price, sl_price, created_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
+    (symbol, alert_type, last_price, leverage, order_type, position, entry_price, tp_price, sl_price, created_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
 
 /** Trade-log rows, newest first. */
 export async function listTrades(limit = 200): Promise<TradeRow[]> {
@@ -552,6 +612,7 @@ export async function addTrade(input: AddTradeInput): Promise<TradeRow> {
     input.lastPrice ?? null,
     input.leverage ?? null,
     input.orderType,
+    input.position,
     input.entryPrice ?? null,
     input.tpPrice ?? null,
     input.slPrice ?? null,

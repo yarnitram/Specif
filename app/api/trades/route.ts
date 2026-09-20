@@ -4,6 +4,7 @@ import {
   findRecentTrade,
   listTrades,
   type OrderType,
+  type Position,
   type TradeAlertType,
 } from "@/lib/db";
 import { fetchMaxLeverage } from "@/lib/mexc";
@@ -28,7 +29,7 @@ export async function GET() {
  * Appends a trade row for a fired alarm. Called by the alarm engine in
  * <Terminal/> when a trigger / TP / SL level is hit.
  *
- * Body: { symbol, alertType, lastPrice, leverage?, orderType, entryPrice, tpPrice, slPrice }
+ * Body: { symbol, alertType, lastPrice, leverage?, orderType, position, entryPrice, tpPrice, slPrice }
  *
  * The leverage is resolved server-side from MEXC (maxLeverage for the contract)
  * unless the caller supplies one, and duplicate submissions for the same
@@ -54,6 +55,10 @@ export async function POST(req: NextRequest) {
       ? (body.orderType as OrderType)
       : "LIMIT";
 
+    const position: Position = (["LONG", "SHORT"] as const).includes(body?.position)
+      ? (body.position as Position)
+      : "LONG";
+
     const toNum = (v: unknown): number | null => {
       if (v === null || v === undefined || v === "") return null;
       const n = Number(v);
@@ -74,6 +79,7 @@ export async function POST(req: NextRequest) {
       lastPrice: toNum(body?.lastPrice),
       leverage,
       orderType,
+      position,
       entryPrice: toNum(body?.entryPrice),
       tpPrice: toNum(body?.tpPrice),
       slPrice: toNum(body?.slPrice),

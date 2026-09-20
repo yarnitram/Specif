@@ -177,6 +177,9 @@ export default function Terminal({ initialRows }: TerminalProps) {
         entryPrice: strategy.entry_price,
         tpPrice: strategy.tp_price,
         slPrice: strategy.sl_price,
+        orderType: strategy.order_type,
+        position: strategy.position,
+        triggerDirection: strategy.trigger_direction,
         triggerFired:
           strategy.trigger_fired || firedMarkers.includes("trigger_fired"),
         tpFired: strategy.tp_fired || firedMarkers.includes("tp_fired"),
@@ -209,6 +212,7 @@ export default function Terminal({ initialRows }: TerminalProps) {
         alertType,
         lastPrice,
         orderType: strategy.order_type,
+        position: strategy.position,
         entryPrice: strategy.entry_price,
         tpPrice: strategy.tp_price,
         slPrice: strategy.sl_price,
@@ -247,22 +251,46 @@ export default function Terminal({ initialRows }: TerminalProps) {
         logTrade(key, alertType, last, s);
       };
 
-      // Trigger alarm - fires when price crosses trigger price in either direction
+      // Direction + side drive how every level is evaluated:
+      //  - trigger : fire only on the crossing snapshotted at save time
+      //              (BELOW = price drops to it, ABOVE = price rises to it,
+      //               BOTH = either way - the pre-existing behaviour)
+      //  - LONG    : profits up   -> TP at/above the level, SL at/below it
+      //  - SHORT   : profits down -> TP at/below the level, SL at/above it
+      const isLong = s.position !== "SHORT";
+      const direction = s.trigger_direction ?? "BOTH";
+
+      // Trigger alarm
       if (s.trigger_price != null && !s.trigger_fired) {
         const triggerPrice = s.trigger_price;
         const prevPrice = prevPricesRef.current[key];
         
-        // Detect cross in either direction
+        // Did the sampled last price change sides of the level this poll?
         const crossedUp = prevPrice != null && prevPrice < triggerPrice && last >= triggerPrice;
         const crossedDown = prevPrice != null && prevPrice > triggerPrice && last <= triggerPrice;
         
-        if (crossedUp || crossedDown) {
-          fire("trigger_fired", "TRIGGER HIT");
+        const hit =
+          direction === "BELOW"
+            ? crossedDown
+            : direction === "ABOVE"
+              ? crossedUp
+              : crossedUp || crossedDown;
+
+        if (hit) {
+          const leg = direction === "BELOW" ? "down" : direction === "ABOVE" ? "up" : "cross";
+          fire("trigger_fired", `TRIGGER HIT · ${leg}`);
         }
       }
-      // Take profit / stop loss based on fair price
-      if (s.tp_price != null && !s.tp_fired && fair >= s.tp_price) fire("tp_fired", "TAKE PROFIT");
-      if (s.sl_price != null && !s.sl_fired && fair <= s.sl_price) fire("sl_fired", "STOP LOSS");
+      // Take profit / stop loss are level checks on the fair (mark) price,
+      // mirrored for shorts so a short's TP - which sits below entry - can fire.
+      if (s.tp_price != null && !s.tp_fired) {
+        const tpHit = isLong ? fair >= s.tp_price : fair <= s.tp_price;
+        if (tpHit) fire("tp_fired", isLong ? "TAKE PROFIT · LONG" : "TAKE PROFIT · SHORT");
+      }
+      if (s.sl_price != null && !s.sl_fired) {
+        const slHit = isLong ? fair <= s.sl_price : fair >= s.sl_price;
+        if (slHit) fire("sl_fired", isLong ? "STOP LOSS · LONG" : "STOP LOSS · SHORT");
+      }
     });
 
     // Persist any newly-fired flags to the DB so they don't re-fire.

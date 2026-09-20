@@ -1,9 +1,16 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
-import { X } from "lucide-react";
-import type { StrategyRow, TickerData, WatchlistJoined, OrderType } from "@/lib/db";
+import { TrendingDown, TrendingUp, X } from "lucide-react";
+import type {
+  StrategyRow,
+  TickerData,
+  WatchlistJoined,
+  OrderType,
+  Position,
+  TriggerDirection,
+} from "@/lib/db";
 import { cn, formatPrice } from "@/lib/utils";
 
 type StrategyModalProps = {
@@ -21,6 +28,27 @@ const emptyForm = {
   orderType: "LIMIT" as OrderType,
 };
 
+/**
+ * Non-blocking heads-up when TP/SL sit on the wrong side of entry for the
+ * selected side (a LONG takes profit above and stops out below, and vice versa).
+ */
+function sideMismatch(
+  position: Position,
+  entry: number | null,
+  tp: number | null,
+  sl: number | null
+): string | null {
+  if (entry == null) return null;
+  if (position === "LONG") {
+    if (tp != null && tp <= entry) return "TP is at/below entry for a LONG";
+    if (sl != null && sl >= entry) return "SL is at/above entry for a LONG";
+    return null;
+  }
+  if (tp != null && tp >= entry) return "TP is at/above entry for a SHORT";
+  if (sl != null && sl <= entry) return "SL is at/below entry for a SHORT";
+  return null;
+}
+
 export default function StrategyModal({ row, tick, onClose, onSaved }: StrategyModalProps) {
   const strategy: StrategyRow | null = row.strategy;
 
@@ -33,6 +61,45 @@ export default function StrategyModal({ row, tick, onClose, onSaved }: StrategyM
   }));
   const [saving, setSaving] = useState(false);
   const [maxLeverage, setMaxLeverage] = useState<number | null>(null);
+
+  // Side + direction are derived from the live price at save time (see `derived`
+  // below); these hold manual overrides on top of that.
+  const [overrides, setOverrides] = useState<{
+    position?: Position;
+    direction?: TriggerDirection;
+  }>({});
+
+  /**
+   * The rule the alarm arms with, snapshotted from the live price when saved:
+   *   last price ABOVE the trigger -> wait for a drop to it (BELOW, LONG)
+   *   last price BELOW the trigger -> wait for a rise to it (ABOVE, SHORT)
+   */
+  const derived = useMemo(() => {
+    const t = form.triggerPrice === "" ? null : Number(form.triggerPrice);
+    const lp = tick?.lastPrice ?? null;
+    if (t == null || lp == null || !Number.isFinite(t) || !Number.isFinite(lp)) return null;
+    const direction: TriggerDirection = lp >= t ? "BELOW" : "ABOVE";
+    return {
+      lastPrice: lp,
+      triggerPrice: t,
+      direction,
+      position: (direction === "BELOW" ? "LONG" : "SHORT") as Position,
+    };
+  }, [form.triggerPrice, tick?.lastPrice]);
+
+  const effectivePosition: Position =
+    overrides.position ?? derived?.position ?? strategy?.position ?? "LONG";
+  const effectiveDirection: TriggerDirection =
+    overrides.direction ?? derived?.direction ?? strategy?.trigger_direction ?? "BOTH";
+  const positionIsAuto = overrides.position == null && derived != null;
+  const directionIsAuto = overrides.direction == null && derived != null;
+
+  const mismatch = sideMismatch(
+    effectivePosition,
+    form.entryPrice === "" ? null : Number(form.entryPrice),
+    form.tpPrice === "" ? null : Number(form.tpPrice),
+    form.slPrice === "" ? null : Number(form.slPrice)
+  );
 
   // Load the MEXC max leverage for this contract.
   useEffect(() => {
@@ -79,6 +146,12 @@ export default function StrategyModal({ row, tick, onClose, onSaved }: StrategyM
       toast.error("Set at least one of trigger, TP or SL price");
       return;
     }
+    // A trigger has to know which way price must cross. That comes from the live
+    // price at save time - or from an explicit direction override.
+    if (form.triggerPrice !== "" && derived == null && overrides.direction == null) {
+      toast.error("Waiting for a live price — pick a trigger direction to override");
+      return;
+    }
     setSaving(true);
     try {
       const res = await fetch("/api/strategy", {
@@ -91,6 +164,8 @@ export default function StrategyModal({ row, tick, onClose, onSaved }: StrategyM
           tpPrice: form.tpPrice === "" ? null : Number(form.tpPrice),
           slPrice: form.slPrice === "" ? null : Number(form.slPrice),
           orderType: form.orderType,
+          position: effectivePosition,
+          triggerDirection: effectiveDirection,
           // reset fired flags on save so alarms re-arm with new targets
           triggerFired: false,
           tpFired: false,
@@ -120,6 +195,7 @@ export default function StrategyModal({ row, tick, onClose, onSaved }: StrategyM
       toast.success("Strategy removed");
       onSaved({ ...row, strategy: null });
       setForm({ ...emptyForm });
+      setOverrides({});
       onClose();
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "Failed to remove strategy");
@@ -169,12 +245,97 @@ export default function StrategyModal({ row, tick, onClose, onSaved }: StrategyM
         <div className="mb-5 rounded-xl border border-borderline bg-surface/40 p-3">
           <label className="mb-2 block text-xs font-semibold text-slate-400">Trigger Alarm</label>
           <input
-            placeholder="Trigger price (fires on cross in either direction)"
+            placeholder="Trigger price (level to watch)"
             value={form.triggerPrice}
             onChange={(e) => set("triggerPrice", e.target.value)}
             inputMode="decimal"
             className={inputCls}
           />
+          {/* The rule this trigger arms with, snapshotted from the live price at save time */}
+          <p className="mt-2 text-[11px] font-mono leading-relaxed text-slate-500">
+            {derived ? (
+              <>
+                Last <span className="text-slate-300">{formatPrice(derived.lastPrice, 6)}</span> is{" "}
+                <span className={derived.direction === "BELOW" ? "text-rose" : "text-emerald"}>
+                  {derived.direction === "BELOW" ? "above" : "below"}
+                </span>{" "}
+                trigger <span className="text-slate-300">{formatPrice(derived.triggerPrice, 6)}</span>{" "}
+                → fires when price crosses{" "}
+                <span className="text-slate-300">
+                  {derived.direction === "BELOW" ? "DOWN to" : "UP to"}{" "}
+                  {formatPrice(derived.triggerPrice, 6)}
+                </span>{" "}
+                · <span className="text-slate-300">{effectivePosition}</span>
+              </>
+            ) : (
+              <>Waiting for a live price to auto-detect the direction — pick one below to override.</>
+            )}
+          </p>
+        </div>
+
+        {/* Position + trigger direction (auto-derived, overridable) */}
+        <div className="mb-5 rounded-xl border border-borderline bg-surface/40 p-3">
+          <div className="mb-2 flex items-center justify-between">
+            <label className="block text-xs font-semibold text-slate-400">Position</label>
+            {positionIsAuto ? (
+              <span className="text-[10px] font-mono text-slate-500">auto from live price</span>
+            ) : overrides.position ? (
+              <button
+                onClick={() => setOverrides((o) => ({ ...o, position: undefined }))}
+                className="text-[10px] font-mono text-emerald transition hover:underline"
+              >
+                reset to auto
+              </button>
+            ) : null}
+          </div>
+          <div className="grid grid-cols-2 gap-2">
+            {(["LONG", "SHORT"] as const).map((side) => {
+              const active = effectivePosition === side;
+              const Icon = side === "LONG" ? TrendingUp : TrendingDown;
+              return (
+                <button
+                  key={side}
+                  onClick={() => setOverrides((o) => ({ ...o, position: side }))}
+                  className={cn(
+                    "flex items-center justify-center gap-1.5 rounded-lg border px-3 py-2 font-mono text-sm font-bold transition",
+                    active
+                      ? side === "LONG"
+                        ? "border-emerald/50 bg-emerald/10 text-emerald"
+                        : "border-rose/50 bg-rose/10 text-rose"
+                      : "border-borderline bg-base/60 text-slate-400 hover:text-slate-200"
+                  )}
+                >
+                  <Icon className="h-4 w-4" />
+                  {side}
+                </button>
+              );
+            })}
+          </div>
+
+          <div className="mb-2 mt-4 flex items-center justify-between">
+            <label className="block text-xs font-semibold text-slate-400">Trigger Direction</label>
+            {directionIsAuto ? (
+              <span className="text-[10px] font-mono text-slate-500">auto from live price</span>
+            ) : overrides.direction ? (
+              <button
+                onClick={() => setOverrides((o) => ({ ...o, direction: undefined }))}
+                className="text-[10px] font-mono text-emerald transition hover:underline"
+              >
+                reset to auto
+              </button>
+            ) : null}
+          </div>
+          <select
+            value={effectiveDirection}
+            onChange={(e) => setOverrides((o) => ({ ...o, direction: e.target.value as TriggerDirection }))}
+            className={selectCls}
+          >
+            <option value="BELOW">Below — fires when price drops to the trigger</option>
+            <option value="ABOVE">Above — fires when price rises to the trigger</option>
+            <option value="BOTH">Either direction</option>
+          </select>
+
+          {mismatch ? <p className="mt-2 text-[11px] font-mono text-amber-400">⚠ {mismatch}</p> : null}
         </div>
 
         {/* Order Type */}

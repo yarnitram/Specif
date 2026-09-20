@@ -5,6 +5,7 @@ import { toast } from "sonner";
 import { Radio, ShieldAlert, Target, Trash2, Zap } from "lucide-react";
 import type { OrderType, TradeAlertType, TradeRow } from "@/lib/db";
 import { cn, formatPrice } from "@/lib/utils";
+import PositionBadge from "./PositionBadge";
 
 type TradesTableProps = {
   initialTrades: TradeRow[];
@@ -99,6 +100,7 @@ export default function TradesTable({ initialTrades }: TradesTableProps) {
           <thead>
             <tr className="border-b border-borderline text-left text-[11px] uppercase tracking-wider text-slate-500">
               <th className="px-4 py-3 font-semibold">Symbol</th>
+              <th className="px-4 py-3 text-center font-semibold">Position</th>
               <th className="px-4 py-3 text-right font-semibold">Last Price</th>
               <th className="px-4 py-3 text-center font-semibold">Leverage</th>
               <th className="px-4 py-3 text-center font-semibold">Order Type</th>
@@ -118,6 +120,9 @@ export default function TradesTable({ initialTrades }: TradesTableProps) {
                 <tr key={trade.id} className="border-t border-borderline transition-colors hover:bg-surface/40">
                   <td className="px-4 py-3">
                     <span className="font-mono text-sm font-semibold text-slate-100">{trade.symbol}</span>
+                  </td>
+                  <td className="px-4 py-3 text-center">
+                    <PositionBadge position={trade.position} />
                   </td>
                   <td className="px-4 py-3 text-right">
                     <PriceCell value={trade.last_price} />

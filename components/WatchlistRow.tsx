@@ -1,8 +1,9 @@
 "use client";
 
 import { Settings2, Trash2, Flame, Zap } from "lucide-react";
-import type { StrategyRow, TickerData, WatchlistJoined, OrderType } from "@/lib/db";
+import type { StrategyRow, TickerData, WatchlistJoined, OrderType, TriggerDirection } from "@/lib/db";
 import { cn, formatPercent, formatPrice, formatVolume } from "@/lib/utils";
+import PositionBadge from "./PositionBadge";
 
 type WatchlistRowProps = {
   row: WatchlistJoined;
@@ -47,6 +48,19 @@ const orderTypeColors: Record<OrderType, string> = {
   TRIGGER_LIMIT: "bg-orange/10 text-orange",
 };
 
+/** Arrow showing which crossing of the trigger arms the alarm. */
+const directionGlyph: Record<TriggerDirection, string> = {
+  ABOVE: "↑",
+  BELOW: "↓",
+  BOTH: "↕",
+};
+
+const directionHint: Record<TriggerDirection, string> = {
+  ABOVE: "Fires when price crosses UP to the trigger",
+  BELOW: "Fires when price crosses DOWN to the trigger",
+  BOTH: "Fires on a cross in either direction",
+};
+
 export default function WatchlistRow({ row, tick, onEdit, onRemove, dragHandleProps, isDragging }: WatchlistRowProps) {
   const strategy: StrategyRow | null = row.strategy;
 
@@ -76,6 +90,11 @@ export default function WatchlistRow({ row, tick, onEdit, onRemove, dragHandlePr
         </div>
       </td>
 
+      {/* Position (auto-derived from the live price when the strategy is saved) */}
+      <td className="hidden px-4 py-3 text-center sm:table-cell">
+        <PositionBadge position={strategy?.position} />
+      </td>
+
       {/* 24h change */}
       <td className="px-4 py-3 text-right">
         <ChangeBadge value={tick?.riseFallRate} />
@@ -93,12 +112,20 @@ export default function WatchlistRow({ row, tick, onEdit, onRemove, dragHandlePr
         </span>
       </td>
 
-      {/* Trigger price */}
+      {/* Trigger price + the crossing that will fire it */}
       <td className="px-4 py-3 text-center">
         {strategy && strategy.trigger_price != null ? (
-          <span className="font-mono text-sm tabular-nums text-emerald">
-            {formatPrice(strategy.trigger_price, 6)}
-          </span>
+          <div className="flex items-center justify-center gap-1.5">
+            <span className="font-mono text-sm tabular-nums text-emerald">
+              {formatPrice(strategy.trigger_price, 6)}
+            </span>
+            <span
+              title={directionHint[strategy.trigger_direction] ?? directionHint.BOTH}
+              className="font-mono text-xs text-slate-500"
+            >
+              {directionGlyph[strategy.trigger_direction] ?? directionGlyph.BOTH}
+            </span>
+          </div>
         ) : (
           <span className="font-mono text-xs text-slate-600">—</span>
         )}
