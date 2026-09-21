@@ -11,7 +11,7 @@ import type {
   Position,
   TriggerDirection,
 } from "@/lib/db";
-import { cn, formatPrice } from "@/lib/utils";
+import { cn, formatPrice, sideMismatch } from "@/lib/utils";
 
 type StrategyModalProps = {
   row: WatchlistJoined;
@@ -27,27 +27,6 @@ const emptyForm = {
   slPrice: "",
   orderType: "LIMIT" as OrderType,
 };
-
-/**
- * Non-blocking heads-up when TP/SL sit on the wrong side of entry for the
- * selected side (a LONG takes profit above and stops out below, and vice versa).
- */
-function sideMismatch(
-  position: Position,
-  entry: number | null,
-  tp: number | null,
-  sl: number | null
-): string | null {
-  if (entry == null) return null;
-  if (position === "LONG") {
-    if (tp != null && tp <= entry) return "TP is at/below entry for a LONG";
-    if (sl != null && sl >= entry) return "SL is at/above entry for a LONG";
-    return null;
-  }
-  if (tp != null && tp >= entry) return "TP is at/above entry for a SHORT";
-  if (sl != null && sl <= entry) return "SL is at/below entry for a SHORT";
-  return null;
-}
 
 export default function StrategyModal({ row, tick, onClose, onSaved }: StrategyModalProps) {
   const strategy: StrategyRow | null = row.strategy;

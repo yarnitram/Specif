@@ -327,7 +327,7 @@ export default function Terminal({ initialRows }: TerminalProps) {
 
   return (
     <main className="min-h-screen bg-base text-slate-200">
-      <div className="mx-auto flex max-w-6xl flex-col gap-4 p-4 sm:p-6">
+      <div className="mx-auto flex max-w-7xl flex-col gap-4 p-4 sm:p-6">
         <Header />
         <StatusBar
           connected={connected}

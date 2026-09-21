@@ -2,9 +2,10 @@
 
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { Bell, Monitor, MessageSquare, CheckCircle2, XCircle, Loader2, Save, ArrowLeft, RotateCcw, SlidersHorizontal } from "lucide-react";
+import { Bell, Monitor, MessageSquare, CheckCircle2, XCircle, Loader2, Save, ArrowLeft, RotateCcw, SlidersHorizontal, Table2, Lock } from "lucide-react";
 import { toast } from "sonner";
-import type { NotificationSettings, GeneralSettings } from "@/lib/db";
+import type { NotificationSettings, GeneralSettings, TradesSettings } from "@/lib/db";
+import { TRADES_COLUMNS, ALWAYS_VISIBLE, COLUMN_LABELS } from "@/lib/trade-columns";
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -17,13 +18,16 @@ export default function SettingsPage() {
     discordUsername: "Specif Terminal",
     discordAvatarUrl: "",
   });
-  const [generalSettings, setGeneralSettings] = useState<GeneralSettings>({
+    const [generalSettings, setGeneralSettings] = useState<GeneralSettings>({
     pollIntervalSeconds: 4,
+  });
+  const [tradesSettings, setTradesSettings] = useState<TradesSettings>({
+    visibleColumns: [...TRADES_COLUMNS],
   });
   const [saving, setSaving] = useState(false);
   const [permission, setPermission] = useState<NotificationPermission>("default");
   const [loading, setLoading] = useState(true);
-  const [activeTab, setActiveTab] = useState<"notifications" | "general">("notifications");
+  const [activeTab, setActiveTab] = useState<"notifications" | "general" | "trades">("notifications");
 
   useEffect(() => {
     loadSettings();
@@ -32,20 +36,25 @@ export default function SettingsPage() {
     }
   }, []);
 
-  async function loadSettings() {
+    async function loadSettings() {
     setLoading(true);
     try {
-      const [notifRes, generalRes] = await Promise.all([
+      const [notifRes, generalRes, tradesRes] = await Promise.all([
         fetch("/api/settings/notifications"),
         fetch("/api/settings/general"),
+        fetch("/api/settings/trades"),
       ]);
       const notifJson = await notifRes.json();
       const generalJson = await generalRes.json();
+      const tradesJson = await tradesRes.json();
       if (notifRes.ok && notifJson.data) {
         setNotifSettings(notifJson.data);
       }
       if (generalRes.ok && generalJson.data) {
         setGeneralSettings(generalJson.data);
+      }
+      if (tradesRes.ok && tradesJson.data) {
+        setTradesSettings(tradesJson.data);
       }
     } catch {
       /* ignore */
@@ -62,6 +71,10 @@ export default function SettingsPage() {
     setGeneralSettings((prev) => ({ ...prev, [key]: value }));
   }
 
+  function handleTradesChange(visibleColumns: string[]) {
+    setTradesSettings({ visibleColumns });
+  }
+
   async function handleSave() {
     setSaving(true);
     try {
@@ -75,6 +88,11 @@ export default function SettingsPage() {
           method: "PUT",
           headers: { "Content-Type": "application/json" },
           body: JSON.stringify(generalSettings),
+        }),
+        fetch("/api/settings/trades", {
+          method: "PUT",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(tradesSettings),
         }),
       ]);
       toast.success("Settings saved");
@@ -188,7 +206,7 @@ export default function SettingsPage() {
           <Bell className="h-4 w-4" />
           Notifications
         </button>
-        <button
+                <button
           onClick={() => setActiveTab("general")}
           className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition ${
             activeTab === "general"
@@ -198,6 +216,17 @@ export default function SettingsPage() {
         >
           <SlidersHorizontal className="h-4 w-4" />
           General
+        </button>
+        <button
+          onClick={() => setActiveTab("trades")}
+          className={`flex items-center gap-2 rounded-md px-4 py-2 text-sm font-medium transition ${
+            activeTab === "trades"
+              ? "bg-emerald text-black"
+              : "text-slate-400 hover:text-slate-200"
+          }`}
+        >
+          <Table2 className="h-4 w-4" />
+          Trades
         </button>
       </div>
 
@@ -356,6 +385,48 @@ export default function SettingsPage() {
                 <p className="mt-1 text-xs text-slate-500">How often to fetch live prices from MEXC (1-60 seconds)</p>
               </div>
             </div>
+                    </section>
+        )}
+
+        {activeTab === "trades" && (
+          <section className="space-y-4">
+            <div className="flex items-center gap-2">
+              <Table2 className="h-5 w-5 text-emerald" />
+              <h2 className="text-lg font-semibold text-slate-100">Column Visibility</h2>
+            </div>
+            <div className="ml-7 space-y-1">
+              {TRADES_COLUMNS.map((col) => {
+                                const alwaysVisible = ALWAYS_VISIBLE.has(col);
+                const visible = tradesSettings.visibleColumns.includes(col);
+                return (
+                  <label
+                    key={col}
+                    className="flex items-center justify-between rounded-md px-2 py-1.5 text-sm text-slate-300 hover:bg-surface/60"
+                  >
+                    <span className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        checked={visible}
+                        disabled={alwaysVisible}
+                        onChange={() => {
+                          if (alwaysVisible) return;
+                          const next = visible
+                            ? tradesSettings.visibleColumns.filter((c) => c !== col)
+                            : [...tradesSettings.visibleColumns, col];
+                          handleTradesChange(next);
+                        }}
+                        className="h-3.5 w-3.5 cursor-pointer rounded border-borderline bg-base/60 text-emerald focus:ring-1 focus:ring-emerald"
+                      />
+                      {COLUMN_LABELS[col]}
+                    </span>
+                    {alwaysVisible && <Lock className="h-3 w-3 text-slate-500" />}
+                  </label>
+                );
+              })}
+            </div>
+            <p className="text-xs text-slate-500">
+              Toggle which columns appear on the Trades table. Saved changes apply the next time the Trades page loads.
+            </p>
           </section>
         )}
 

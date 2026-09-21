@@ -1,4 +1,8 @@
 import type { Client as RemoteClient, Config as RemoteConfig } from "@libsql/client";
+import {
+  TRADES_COLUMNS,
+  TRADES_ALWAYS_VISIBLE,
+} from "./trade-columns";
 
 // SQL bound-parameter values we ever pass. `number | string | boolean | null`
 // is assignable to @libsql/client's InValue, so these fit both backends.
@@ -67,8 +71,9 @@ export type WatchlistJoined = WatchlistRow & {
 export type TradeAlertType = "TRIGGER" | "TP" | "SL";
 
 /**
- * A single entry in the trade log. One row is appended every time a strategy
- * alarm fires on the watchlist page (trigger / take-profit / stop-loss).
+ * A single entry in the trade log. One row per fired alarm (trigger / TP / SL).
+ * margin is the account margin allocated to the trade (default $1); together with
+ * leverage it determines the position size used for the unrealized PNL columns.
  */
 export type TradeRow = {
   id: number;
@@ -81,6 +86,7 @@ export type TradeRow = {
   entry_price: number | null;
   tp_price: number | null;
   sl_price: number | null;
+  margin: number | null;
   created_at: string;
 };
 
@@ -224,6 +230,7 @@ function asTradeRow(r: Record<string, unknown>): TradeRow {
     entry_price: r.entry_price == null ? null : Number(r.entry_price),
     tp_price: r.tp_price == null ? null : Number(r.tp_price),
     sl_price: r.sl_price == null ? null : Number(r.sl_price),
+    margin: r.margin == null ? null : Number(r.margin),
     created_at: String(r.created_at ?? ""),
   };
 }
@@ -325,6 +332,11 @@ async function migrate() {
       table: "trades",
       column: "position",
       sql: "ALTER TABLE trades ADD COLUMN position TEXT CHECK(position IN ('LONG', 'SHORT')) DEFAULT 'LONG'",
+    },
+    {
+      table: "trades",
+      column: "margin",
+      sql: "ALTER TABLE trades ADD COLUMN margin REAL DEFAULT 1",
     },
   ];
   for (const m of columnMigrations) {
@@ -578,11 +590,12 @@ export type AddTradeInput = {
   entryPrice: number | null;
   tpPrice: number | null;
   slPrice: number | null;
+  margin?: number | null;
 };
 
 const insertTradeSql = `INSERT INTO trades
-    (symbol, alert_type, last_price, leverage, order_type, position, entry_price, tp_price, sl_price, created_at)
-   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
+    (symbol, alert_type, last_price, leverage, order_type, position, entry_price, tp_price, sl_price, margin, created_at)
+   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
 
 /** Trade-log rows, newest first. */
 export async function listTrades(limit = 200): Promise<TradeRow[]> {
@@ -616,6 +629,7 @@ export async function addTrade(input: AddTradeInput): Promise<TradeRow> {
     input.entryPrice ?? null,
     input.tpPrice ?? null,
     input.slPrice ?? null,
+    input.margin ?? null,
   ];
   if (b === "remote") {
     const ins = await remoteClient!.execute({ sql: insertTradeSql, args });
@@ -633,6 +647,81 @@ export async function addTrade(input: AddTradeInput): Promise<TradeRow> {
     unknown
   >;
   return asTradeRow(row);
+}
+
+export type UpdateTradeInput = {
+  alertType?: TradeAlertType;
+  lastPrice?: number | null;
+  leverage?: number | null;
+  orderType?: OrderType;
+  position?: Position;
+  entryPrice?: number | null;
+  tpPrice?: number | null;
+  slPrice?: number | null;
+  margin?: number | null;
+};
+
+/**
+ * Columns a PATCH may write: input key -> column. Doubles as the whitelist that
+ * keeps user input out of the SET clause, so this stays a fixed key set.
+ */
+const tradeUpdateColumns: Array<[keyof UpdateTradeInput, string]> = [
+  ["alertType", "alert_type"],
+  ["lastPrice", "last_price"],
+  ["leverage", "leverage"],
+  ["orderType", "order_type"],
+  ["position", "position"],
+  ["entryPrice", "entry_price"],
+  ["tpPrice", "tp_price"],
+  ["slPrice", "sl_price"],
+  ["margin", "margin"],
+];
+
+/** A single trade-log row by id, or null when it doesn't exist. */
+export async function getTrade(id: number): Promise<TradeRow | null> {
+  await migrate();
+  const b = backend;
+  if (b === "remote") {
+    const rs = await remoteClient!.execute({ sql: "SELECT * FROM trades WHERE id = ?", args: [id] });
+    const rows = remoteRows(rs);
+    return rows.length ? asTradeRow(rows[0]) : null;
+  }
+  const row = (localDb as LocalDb).prepare("SELECT * FROM trades WHERE id = ?").get(id) as
+    | Record<string, unknown>
+    | undefined;
+  return row ? asTradeRow(row) : null;
+}
+
+/**
+ * Partial update of a trade-log row. Only the supplied keys are written - an
+ * omitted (`undefined`) key leaves its column untouched, while `null` clears a
+ * numeric one. Returns the updated row, or null when the id doesn't exist.
+ */
+export async function updateTrade(id: number, input: UpdateTradeInput): Promise<TradeRow | null> {
+  await migrate();
+  const b = backend;
+  const sets: string[] = [];
+  const args: SqlArg[] = [];
+
+  for (const [key, column] of tradeUpdateColumns) {
+    const value = input[key];
+    if (value === undefined) continue;
+    sets.push(`${column} = ?`);
+    args.push(value as SqlArg);
+  }
+
+  // Nothing supplied -> read-only request; just report the current row.
+  if (sets.length > 0) {
+    args.push(id);
+    const sql = `UPDATE trades SET ${sets.join(", ")} WHERE id = ?`;
+    if (b === "remote") {
+      await remoteClient!.execute({ sql, args });
+    } else {
+      (localDb as LocalDb).prepare(sql).run(...args);
+    }
+  }
+
+  return getTrade(id);
 }
 
 /**
@@ -690,9 +779,15 @@ export type GeneralSettings = {
   pollIntervalSeconds: number;
 };
 
+export type TradesSettings = {
+  /** Keys of columns to show on the Trades table. Defaults to all. */
+  visibleColumns: string[];
+};
+
 const SETTINGS_KEYS = {
   NOTIFICATIONS: "notifications",
   GENERAL: "general",
+  TRADES: "trades",
 } as const;
 
 function getDefaultNotificationSettings(): NotificationSettings {
@@ -773,4 +868,40 @@ export async function setGeneralSettings(input: Partial<GeneralSettings>): Promi
   const current = await getGeneralSettings();
   const merged = { ...current, ...input };
   await setSettingValue(SETTINGS_KEYS.GENERAL, JSON.stringify(merged));
+}
+
+function getDefaultTradesSettings(): TradesSettings {
+  // Start with every column visible except the always-shown ones (which are
+  // included automatically). This can be extended with more defaults later.
+  return { visibleColumns: [...TRADES_COLUMNS] };
+}
+
+function parseTradesSettings(raw: string | null): TradesSettings {
+  const defaults = getDefaultTradesSettings();
+  if (!raw) return defaults;
+  try {
+    const parsed = JSON.parse(raw);
+    const cols: string[] = Array.isArray(parsed?.visibleColumns)
+      ? parsed.visibleColumns
+      : defaults.visibleColumns;
+    // Always include the always-visible columns, de-duplicate, and keep order
+    // from TRADES_COLUMNS.
+    const set = new Set([...TRADES_ALWAYS_VISIBLE, ...cols]);
+    const ordered = TRADES_COLUMNS.filter((c) => set.has(c));
+    return { visibleColumns: ordered };
+  } catch {
+    return defaults;
+  }
+}
+
+export async function getTradesSettings(): Promise<TradesSettings> {
+  await migrate();
+  return parseTradesSettings(await getSettingValue(SETTINGS_KEYS.TRADES));
+}
+
+export async function setTradesSettings(input: Partial<TradesSettings>): Promise<void> {
+  await migrate();
+  const current = await getTradesSettings();
+  const merged = { ...current, ...input };
+  await setSettingValue(SETTINGS_KEYS.TRADES, JSON.stringify(merged));
 }

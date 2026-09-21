@@ -26,7 +26,7 @@ function relativeTime(ts: number | null): string {
 
 export default function StatusBar({ connected, reconnecting, lastMessageAt, counts }: StatusBarProps) {
   return (
-    <div className="mx-auto flex w-full max-w-6xl justify-center">
+    <div className="mx-auto flex w-full max-w-7xl justify-center">
       <div className="mt-4 flex w-full flex-wrap items-center justify-center gap-x-5 gap-y-2 rounded-xl border border-borderline bg-surface/40 px-4 py-3">
         <div
           className={cn(

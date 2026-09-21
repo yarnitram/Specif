@@ -83,6 +83,7 @@ export async function POST(req: NextRequest) {
       entryPrice: toNum(body?.entryPrice),
       tpPrice: toNum(body?.tpPrice),
       slPrice: toNum(body?.slPrice),
+      margin: toNum(body?.margin),
     });
 
     return NextResponse.json({ data: row }, { status: 201 });
